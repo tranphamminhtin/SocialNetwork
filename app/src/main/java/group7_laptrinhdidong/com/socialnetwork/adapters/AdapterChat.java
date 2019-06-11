@@ -2,12 +2,17 @@ package group7_laptrinhdidong.com.socialnetwork.adapters;
 
 import android.app.AlertDialog;
 import android.app.DatePickerDialog;
+import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.os.AsyncTask;
 import android.support.annotation.NonNull;
 import android.support.v7.widget.AlertDialogLayout;
 import android.support.v7.widget.RecyclerView;
 import android.text.format.DateFormat;
+import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,11 +32,13 @@ import com.google.firebase.database.Query;
 import com.google.firebase.database.ValueEventListener;
 import com.squareup.picasso.Picasso;
 
+import java.io.IOException;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
+import group7_laptrinhdidong.com.socialnetwork.ChatActivity;
 import group7_laptrinhdidong.com.socialnetwork.R;
 import group7_laptrinhdidong.com.socialnetwork.models.ModelChat;
 
@@ -39,9 +46,16 @@ public class AdapterChat extends RecyclerView.Adapter<AdapterChat.MyHolder> {
 
     private static final int MSG_TYPE_LEFT =0;
     private static final int MSG_TYPE_RIGHT =1;
+    public static final int MSG_TYPE_LEFT_IMAGE=2;
+    public static final int MSG_TYPE_RIGHT_IMAGE=3;
+    public static final int MSG_TYPE_LEFT_AUDIO=4;
+    public static final int MSG_TYPE_RIGHT_AUDIO=5;
     Context context;
     List<ModelChat> chatList;
     String imageUrl;
+    boolean isPlay=false;
+    ProgressDialog progressDialog;
+    RecyclerView.ViewHolder vieww;
 
     //firebase
     FirebaseUser fUser;
@@ -59,57 +73,47 @@ public class AdapterChat extends RecyclerView.Adapter<AdapterChat.MyHolder> {
         if(i==MSG_TYPE_LEFT){
             View view = LayoutInflater.from(context).inflate(R.layout.row_chat_left, viewGroup, false);
             return new MyHolder(view);
-        } else {
+        } else if (i==MSG_TYPE_RIGHT){
             View view = LayoutInflater.from(context).inflate(R.layout.row_chat_right, viewGroup, false);
             return new MyHolder(view);
+        } else if (i==MSG_TYPE_RIGHT_IMAGE) {
+            View view = LayoutInflater.from(context).inflate(R.layout.chat_image_right, viewGroup, false);
+            return new MyHolder(view);
+        } else if (i==MSG_TYPE_LEFT_IMAGE){
+            View view = LayoutInflater.from(context).inflate(R.layout.chat_image_left, viewGroup, false);
+            return new MyHolder(view);
+        } else if (i==MSG_TYPE_RIGHT_AUDIO){
+            View view = LayoutInflater.from(context).inflate(R.layout.chat_audio_right, viewGroup, false);
+            return new MyHolder(view);
+        } else {
+            View view = LayoutInflater.from(context).inflate(R.layout.chat_audio_left, viewGroup, false);
+            return new MyHolder(view);
         }
+
     }
 
     @Override
-    public void onBindViewHolder(@NonNull MyHolder myHolder, final int i) {
-        //get data
-        String message = chatList.get(i).getMessage();
+    public void onBindViewHolder(@NonNull final MyHolder myHolder, final int i) {
+        isPlay=false;
         String timeStamp = chatList.get(i).getTimestamp();
 
+        if (!chatList.get(i).getImageURL().equals("default"))
+            Picasso.get().load(chatList.get(i).getImageURL()).into(myHolder.imgChat);
+        else if (chatList.get(i).getAudioURL().equals("default")){
+            myHolder.messageTxv.setText(chatList.get(i).getMessage());
+        }
         //cover time stamp to dd/mm/yyyy hh:mm am/pm
         Calendar cal = Calendar.getInstance(Locale.ENGLISH);
         cal.setTimeInMillis(Long.parseLong(timeStamp));
         String dateTime = DateFormat.format("dd/MM/yyyy hh:mm aa", cal).toString();
-
-        //set data
-        myHolder.messageTxv.setText(message);
         myHolder.timeTxv.setText(dateTime);
         try{
             Picasso.get().load(imageUrl).into(myHolder.profileIv);
         } catch (Exception e){
 
         }
+        progressDialog = new ProgressDialog(context);
 
-        myHolder.messageLayout.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                AlertDialog.Builder builder = new AlertDialog.Builder(context);
-                builder.setTitle("Delete");
-                builder.setMessage("Are you sure to delete this message");
-                //delete button
-                builder.setPositiveButton("Delete", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        deleteMessage(i);
-                    }
-                });
-                //cancel button
-                builder.setNegativeButton("No", new DialogInterface.OnClickListener() {
-                    @Override
-                    public void onClick(DialogInterface dialog, int which) {
-                        dialog.dismiss();
-                    }
-                });
-
-                //create and show dialog
-                builder.create().show();
-            }
-        });
 
         if(i==chatList.size()-1){
             if (chatList.get(i).isSeen()){
@@ -120,38 +124,105 @@ public class AdapterChat extends RecyclerView.Adapter<AdapterChat.MyHolder> {
         } else {
             myHolder.isSeenTxv.setVisibility(View.GONE);
         }
-    }
 
-    private void deleteMessage(int position){
+//        myHolder.messageLayout.setOnClickListener(new View.OnClickListener() {
+//            @Override
+//            public void onClick(View v) {
+//                AlertDialog.Builder builder = new AlertDialog.Builder(context);
+//                builder.setTitle("Delete");
+//                builder.setMessage("Are you sure to delete this message");
+//                //delete button
+//                builder.setPositiveButton("Delete", new DialogInterface.OnClickListener() {
+//                    @Override
+//                    public void onClick(DialogInterface dialog, int which) {
+//                        deleteMessage(i);
+//                    }
+//                });
+//                //cancel button
+//                builder.setNegativeButton("No", new DialogInterface.OnClickListener() {
+//                    @Override
+//                    public void onClick(DialogInterface dialog, int which) {
+//                        dialog.dismiss();
+//                    }
+//                });
+//
+//                //create and show dialog
+//                builder.create().show();
+//            }
+//        });
 
-        final String myUID = FirebaseAuth.getInstance().getCurrentUser().getUid();
+        if (!chatList.get(i).getAudioURL().equals("default")) {
+            myHolder.imgPlay.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (ChatActivity.mediaPlayer==null){
+                        ChatActivity.mediaPlayer = new MediaPlayer();
+                        ChatActivity.mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
+                    }
+                    else
+                    {
+                        if (ChatActivity.mediaPlayer.isPlaying()){
+                            ChatActivity.mediaPlayer.stop();
+                        }
+                    }
+                    myHolder.imgPlay.setVisibility(View.INVISIBLE);
+                    myHolder.imgPause.setVisibility(View.VISIBLE);
+                    myHolder.txtStatus.setText("Pause");
+                    if (!isPlay){
+                        new Player().execute(chatList.get(i).getAudioURL());
+                    }
+                    else {
+                        if (!ChatActivity.mediaPlayer.isPlaying()){
+                            ChatActivity.mediaPlayer.start();
+                        }
+                    }
 
-        String msgTimeStamp = chatList.get(position).getTimestamp();
-        DatabaseReference dbRef = FirebaseDatabase.getInstance().getReference("Chats");
-        Query query = dbRef.orderByChild("timestamp").equalTo(msgTimeStamp);
-        query.addListenerForSingleValueEvent(new ValueEventListener() {
-            @Override
-            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
-                for(DataSnapshot ds: dataSnapshot.getChildren()){
-
-                    if(ds.child("sender").getValue().equals(myUID)){
-
-                        ds.getRef().removeValue();
-
-                        Toast.makeText(context, "message deleted...", Toast.LENGTH_SHORT).show();
-                    } else {
-                        Toast.makeText(context, "You can delete only your message...", Toast.LENGTH_SHORT).show();
+                }
+            });
+            myHolder.imgPause.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    myHolder.txtStatus.setText("Play");
+                    myHolder.imgPlay.setVisibility(View.VISIBLE);
+                    myHolder.imgPause.setVisibility(View.INVISIBLE);
+                    if (ChatActivity.mediaPlayer.isPlaying()) {
+                        ChatActivity.mediaPlayer.pause();
                     }
                 }
-            }
-
-            @Override
-            public void onCancelled(@NonNull DatabaseError databaseError) {
-
-            }
-        });
-
+            });
+        }
     }
+
+//    private void deleteMessage(int position){
+//
+//        final String myUID = FirebaseAuth.getInstance().getCurrentUser().getUid();
+//
+//        String msgTimeStamp = chatList.get(position).getTimestamp();
+//        DatabaseReference dbRef = FirebaseDatabase.getInstance().getReference("Chats");
+//        Query query = dbRef.orderByChild("timestamp").equalTo(msgTimeStamp);
+//        query.addListenerForSingleValueEvent(new ValueEventListener() {
+//            @Override
+//            public void onDataChange(@NonNull DataSnapshot dataSnapshot) {
+//                for(DataSnapshot ds: dataSnapshot.getChildren()){
+//
+//                    if(ds.child("sender").getValue().equals(myUID)){
+//
+//                        ds.getRef().removeValue();
+//
+//                        Toast.makeText(context, "message deleted...", Toast.LENGTH_SHORT).show();
+//                    } else {
+//                        Toast.makeText(context, "You can delete only your message...", Toast.LENGTH_SHORT).show();
+//                    }
+//                }
+//            }
+//
+//            @Override
+//            public void onCancelled(@NonNull DatabaseError databaseError) {
+//
+//            }
+//        });
+//
+//    }
 
     @Override
     public int getItemCount() {
@@ -162,10 +233,22 @@ public class AdapterChat extends RecyclerView.Adapter<AdapterChat.MyHolder> {
     public int getItemViewType(int position) {
         //get currently signed in user
         fUser = FirebaseAuth.getInstance().getCurrentUser();
-        if(chatList.get(position).getSender().equals(fUser.getUid()))
-            return MSG_TYPE_RIGHT;
-        else
-            return MSG_TYPE_LEFT;
+        if (chatList.get(position).getSender().equals(fUser.getUid()))
+        {
+            if (!chatList.get(position).getImageURL().equals("default"))
+                return MSG_TYPE_RIGHT_IMAGE;
+            else if (!chatList.get(position).getAudioURL().equals("default"))
+                return MSG_TYPE_RIGHT_AUDIO;
+            else
+                return MSG_TYPE_RIGHT;
+        }
+        else {
+            if (!chatList.get(position).getImageURL().equals("default"))
+                return MSG_TYPE_LEFT_IMAGE;
+            else if (!chatList.get(position).getAudioURL().equals("default"))
+                return MSG_TYPE_LEFT_AUDIO;
+            else return MSG_TYPE_LEFT;
+        }
     }
 
     //view holder class
@@ -173,8 +256,9 @@ public class AdapterChat extends RecyclerView.Adapter<AdapterChat.MyHolder> {
 
         //views
         ImageView profileIv;
-        TextView messageTxv, timeTxv, isSeenTxv;
+        TextView messageTxv, timeTxv, isSeenTxv, txtStatus;
         LinearLayout messageLayout;
+        ImageView imgChat, imgPlay, imgPause;
 
         public MyHolder(@NonNull View itemView){
             super(itemView);
@@ -185,6 +269,58 @@ public class AdapterChat extends RecyclerView.Adapter<AdapterChat.MyHolder> {
             timeTxv = itemView.findViewById(R.id.timeTxv);
             isSeenTxv = itemView.findViewById(R.id.isSeenTxv);
             messageLayout = itemView.findViewById(R.id.messageLayout);
+            imgChat = itemView.findViewById(R.id.imgChat);
+            imgPlay = itemView.findViewById(R.id.imgPlay);
+            imgPause = itemView.findViewById(R.id.imgPause);
+            txtStatus= itemView.findViewById(R.id.txtStatus);
+        }
+    }
+
+    //player class
+    class Player extends AsyncTask<String,Void,Boolean> {
+
+        @Override
+        protected Boolean doInBackground(String... strings) {
+
+            Boolean prepared =false;
+            try {
+
+                ChatActivity.mediaPlayer.setDataSource(strings[0]);
+                ChatActivity.mediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+                    @Override
+                    public void onCompletion(MediaPlayer mp) {
+                        isPlay=false;
+                        //vieww.txtStatus = vieww.itemView.findViewById(R.id.txtStatus);
+                        //vieww.txtStatus.setText("Start Play");
+                        ChatActivity.TimeOut();
+                    }
+                });
+                ChatActivity.mediaPlayer.prepare();
+                prepared=true;
+            }
+            catch (IOException ex){
+                Log.e("My audio app ", ex.getMessage());
+                prepared=false;
+            }
+            return prepared;
+        }
+
+        @Override
+        protected void onPostExecute(Boolean aBoolean) {
+            super.onPostExecute(aBoolean);
+
+            if (progressDialog.isShowing()){
+                progressDialog.cancel();
+            }
+            ChatActivity.mediaPlayer.start();
+            isPlay=true;
+        }
+
+        @Override
+        protected void onPreExecute() {
+            super.onPreExecute();
+            progressDialog.setMessage("Loading...");
+            progressDialog.show();
         }
     }
 }

@@ -64,6 +64,22 @@
         android:gravity="center"
         android:orientation="horizontal">
 
+        <ImageButton
+            android:id="@+id/chooseImage"
+            android:background="#565B5F"
+            android:layout_marginLeft="10dp"
+            android:src="@drawable/ic_add_image"
+            android:layout_width="40dp"
+            android:layout_height="40dp" />
+
+        <ImageButton
+            android:id="@+id/chooseAudio"
+            android:background="#565B5F"
+            android:layout_marginLeft="5dp"
+            android:src="@drawable/ic_music_white"
+            android:layout_width="40dp"
+            android:layout_height="40dp" />
+
         <EditText
             android:id="@+id/messageEdt"
             android:layout_weight="1"

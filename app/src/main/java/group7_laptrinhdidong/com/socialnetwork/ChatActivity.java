@@ -1,7 +1,13 @@
 package group7_laptrinhdidong.com.socialnetwork;
 
+import android.app.ProgressDialog;
+import android.content.ContentResolver;
 import android.content.Intent;
+import android.media.AudioManager;
+import android.media.MediaPlayer;
+import android.net.Uri;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.support.v7.widget.LinearLayoutManager;
@@ -12,6 +18,7 @@ import android.text.format.DateFormat;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.webkit.MimeTypeMap;
 import android.widget.EditText;
 import android.widget.ImageButton;
 import android.widget.ImageView;
@@ -19,6 +26,10 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.google.android.gms.tasks.Continuation;
+import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.Task;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 import com.google.firebase.database.DataSnapshot;
@@ -27,6 +38,10 @@ import com.google.firebase.database.DatabaseReference;
 import com.google.firebase.database.FirebaseDatabase;
 import com.google.firebase.database.Query;
 import com.google.firebase.database.ValueEventListener;
+import com.google.firebase.storage.FirebaseStorage;
+import com.google.firebase.storage.StorageReference;
+import com.google.firebase.storage.StorageTask;
+import com.google.firebase.storage.UploadTask;
 import com.squareup.picasso.Picasso;
 
 import java.util.ArrayList;
@@ -50,12 +65,16 @@ public class ChatActivity extends AppCompatActivity {
     ImageView profileIv;
     TextView nameTxv, userStatusTxv;
     EditText messageEdt;
-    ImageButton sendBtn;
+    ImageButton sendBtn, chooseImage, chooseAudio;
+    String imageURL="default", audioURL="default";
 
     //firebase auth
     FirebaseAuth firebaseAuth;
     FirebaseDatabase firebaseDatabase;
     DatabaseReference usersDbRef;
+    private StorageTask uploadTask;
+    private Uri imageUri;
+    StorageReference storageReference;
 
     //for checking if use has seen message or not
     ValueEventListener seenListener;
@@ -68,7 +87,10 @@ public class ChatActivity extends AppCompatActivity {
     String myUid;
     String hisImage;
 
-
+    private static final int IMAGE_REQUEST = 1;
+    public static MediaPlayer mediaPlayer;
+    private int isImage=0;
+    public static TextView txtStt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -84,6 +106,9 @@ public class ChatActivity extends AppCompatActivity {
         userStatusTxv = findViewById(R.id.usersStatusTxv);
         messageEdt = findViewById(R.id.messageEdt);
         sendBtn = findViewById(R.id.sendBtn);
+        chooseImage = findViewById(R.id.chooseImage);
+        chooseAudio = findViewById(R.id.chooseAudio);
+        txtStt = findViewById(R.id.txtStatus);
 
         //layout for RecyclerView
         LinearLayoutManager linearLayoutManager = new LinearLayoutManager(this);
@@ -134,6 +159,9 @@ public class ChatActivity extends AppCompatActivity {
                     } catch (Exception e) {
                         Picasso.get().load(R.drawable.ic_default).into(profileIv);
                     }
+
+                    readMessage();
+
                 }
             }
 
@@ -147,6 +175,8 @@ public class ChatActivity extends AppCompatActivity {
         sendBtn.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                imageURL="default";
+                audioURL="default";
                 //get text from edit text
                 String message = messageEdt.getText().toString().trim();
                 //check if text empty or not
@@ -154,7 +184,7 @@ public class ChatActivity extends AppCompatActivity {
                     Toast.makeText(ChatActivity.this, "Can't send the empty message...", Toast.LENGTH_SHORT).show();
 
                 } else {
-                    sendMessage(message);
+                    sendMessage(message, imageURL, audioURL);
                 }
 
                 //reset edit text
@@ -162,7 +192,22 @@ public class ChatActivity extends AppCompatActivity {
             }
         });
 
-        readMessage();
+        chooseImage.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                isImage=1;
+                openImage();
+            }
+        });
+        chooseAudio.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                isImage=0;
+                openImage();
+            }
+        });
+
+        storageReference = FirebaseStorage.getInstance().getReference("uploads");
 
         seenMessage();
     }
@@ -217,7 +262,7 @@ public class ChatActivity extends AppCompatActivity {
         });
     }
 
-    private void sendMessage(final String message) {
+    private void sendMessage(final String message, String imageURL,String audioURL) {
         DatabaseReference databaseReference = FirebaseDatabase.getInstance().getReference();
 
         String timestamp = String.valueOf(System.currentTimeMillis());
@@ -228,6 +273,8 @@ public class ChatActivity extends AppCompatActivity {
         hashMap.put("message", message);
         hashMap.put("timestamp", timestamp);
         hashMap.put("isSeen", false);
+        hashMap.put("imageURL",imageURL);
+        hashMap.put("audioURL",audioURL);
         databaseReference.child("Chats").push().setValue(hashMap);
 
     }
@@ -251,6 +298,76 @@ public class ChatActivity extends AppCompatActivity {
         dbRef.updateChildren(hashMap);
     }
 
+    public static void TimeOut(){
+
+        mediaPlayer.stop();
+        mediaPlayer.reset();
+    }
+
+    private void openImage() {
+        Intent intent = new Intent();
+        if (isImage==1)
+            intent.setType("image/*");
+        else
+            intent.setType("audio/*");
+        intent.setAction(Intent.ACTION_GET_CONTENT);
+        startActivityForResult(intent,IMAGE_REQUEST);
+    }
+
+    private String getFileExtension(Uri uri){
+        ContentResolver contentResolver = this.getContentResolver();
+        MimeTypeMap mimeTypeMap = MimeTypeMap.getSingleton();
+        return mimeTypeMap.getExtensionFromMimeType(contentResolver.getType(uri));
+    }
+
+    private void uploadImage() {
+        final ProgressDialog pd = new ProgressDialog(ChatActivity.this);
+        pd.setMessage("Uploading...");
+        pd.show();
+        if (imageUri!=null){
+            final StorageReference fileReference =  storageReference.child(System.currentTimeMillis()+","
+                    + getFileExtension(imageUri));
+            uploadTask =fileReference.putFile(imageUri);
+            uploadTask.continueWithTask(new Continuation<UploadTask.TaskSnapshot, Task<Uri>>(){
+
+                @Override
+                public Task<Uri> then(@NonNull Task<UploadTask.TaskSnapshot> task) throws Exception {
+                    if (!task.isSuccessful()){
+                        throw task.getException();
+                    }
+                    return fileReference.getDownloadUrl();
+                }
+            }).addOnCompleteListener(new OnCompleteListener<Uri>() {
+                @Override
+                public void onComplete(@NonNull Task<Uri> task) {
+                    if (task.isSuccessful()){
+                        Uri downloadUri = task.getResult();
+                        String mUri = downloadUri.toString();
+                        if (isImage==1)
+                            sendMessage(messageEdt.getText().toString(),mUri,"default");
+                        else
+                            sendMessage(messageEdt.getText().toString(),"default",mUri);
+                        pd.dismiss();
+                    }
+                    else
+                    {
+                        Toast.makeText(ChatActivity.this, "Thất bại!", Toast.LENGTH_SHORT).show();
+                        pd.dismiss();
+                    }
+                }
+            }).addOnFailureListener(new OnFailureListener() {
+                @Override
+                public void onFailure(@NonNull Exception e) {
+                    Toast.makeText(ChatActivity.this, e.getMessage(), Toast.LENGTH_SHORT).show();
+                    pd.dismiss();
+                }
+            });
+        } else
+        {
+            Toast.makeText(this, "Không có image nào được chọn!", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     @Override
     protected void onStart() {
         checkUserStatus();
@@ -265,12 +382,19 @@ public class ChatActivity extends AppCompatActivity {
         String timestamp = String.valueOf(System.currentTimeMillis());
         checkOnlineStatus(timestamp);
         userRefForSeen.removeEventListener(seenListener);
+        if (mediaPlayer!=null){
+            mediaPlayer.reset();
+            mediaPlayer.release();
+            mediaPlayer=null;
+        }
     }
 
     @Override
     protected void onResume() {
         checkOnlineStatus("online");
         super.onResume();
+        mediaPlayer = new MediaPlayer();
+        mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
     }
 
     @Override
@@ -292,5 +416,19 @@ public class ChatActivity extends AppCompatActivity {
         }
 
         return super.onOptionsItemSelected(item);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode==IMAGE_REQUEST && resultCode==RESULT_OK && data!=null && data.getData()!=null){
+            imageUri=data.getData();
+            if (uploadTask!=null && uploadTask.isInProgress()){
+                Toast.makeText(this, "Đang tải lên!", Toast.LENGTH_SHORT).show();
+            }
+            else {
+                uploadImage();
+            }
+        }
     }
 }
